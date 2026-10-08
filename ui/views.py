@@ -403,7 +403,7 @@ class TeacherView(BaseView):
         st.markdown("**Course not in the list?**")
         with st.form(form_key("create_course")):
             c1, c2 = st.columns([1, 2])
-            code = c1.text_input("Course code", placeholder=CS101")
+            code = c1.text_input("Course code", placeholder="CS101")
             title = c2.text_input("Course title", placeholder="Introduction to Computer Systems")
             create = st.form_submit_button("Create and add course", type="primary")
         if create:

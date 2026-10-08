@@ -1,5 +1,3 @@
-"""The login / sign-up screen shown when the app starts."""
-
 from __future__ import annotations
 
 import streamlit as st
@@ -27,7 +25,7 @@ class LoginScreen:
         _, center, _ = st.columns([1, 1.4, 1])
         with center:
             st.title("Queue&A")
-            st.caption("Book consultations with your teachers on one platform.")
+            st.caption("Book and manage consultations with your teachers on one platform.")
             show_flash()
             login_tab, signup_tab = st.tabs(["Log in", "Sign up"])
             with login_tab:
@@ -38,7 +36,7 @@ class LoginScreen:
     # ------------------------------------------------------------------
     def _render_login(self) -> None:
         with st.form("login_form"):
-            email = st.text_input("Email", placeholder="you@school.edu")
+            email = st.text_input("Email", placeholder="email@mcm.edu.ph")
             password = st.text_input("Password", type="password")
             submitted = st.form_submit_button("Log in", type="primary")
         if submitted:
