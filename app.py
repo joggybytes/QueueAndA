@@ -1,42 +1,25 @@
-"""Queue&A: Teacher-Student Consultation Booking System.
-
-Run with:  streamlit run app.py
-"""
-
 from __future__ import annotations
 
 import streamlit as st
 
 st.set_page_config(page_title="Queue&A", page_icon="🗓️", layout="wide")
 
-from core import timeutil  # noqa: E402
-from core.auth import AuthManager  # noqa: E402
-from core.datastore import SupabaseDataStore  # noqa: E402
-from core.manager import BookingManager  # noqa: E402
-from core.models import QueueAError  # noqa: E402
-from ui.login import LoginScreen  # noqa: E402
-from ui.views import BaseView  # noqa: E402
-
-SETUP_HELP = """
-**Queue&A isn't connected to Supabase yet.**
-
-1. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`.
-2. Fill in your Supabase **Project URL** and **service_role key**
-   (Supabase Dashboard → Project Settings → API).
-3. Run `supabase/schema.sql` once in the Supabase SQL Editor.
-4. Restart the app.
-"""
-
+from core import timeutil  
+from core.auth import AuthManager  
+from core.datastore import SupabaseDataStore  
+from core.manager import BookingManager  
+from core.models import QueueAError  
+from ui.common import apply_theme  
+from ui.login import LoginScreen  
+from ui.views import BaseView  
 
 def _read_settings() -> tuple[str, str, str | None]:
     try:
         supabase = st.secrets["supabase"]
         url, key = str(supabase["url"]).strip(), str(supabase["key"]).strip()
     except Exception:
-        st.error(SETUP_HELP)
         st.stop()
     if not url or not key or "YOUR-PROJECT" in url:
-        st.error(SETUP_HELP)
         st.stop()
     try:
         tz_name = st.secrets.get("app", {}).get("timezone")
@@ -52,6 +35,7 @@ def _connect(url: str, key: str) -> SupabaseDataStore:
 
 
 def main() -> None:
+    apply_theme()
     url, key, tz_name = _read_settings()
     timeutil.configure(tz_name)
     store = _connect(url, key)
@@ -66,9 +50,11 @@ def main() -> None:
             st.session_state.clear()
 
     if user is None:
-        LoginScreen(auth, manager).render()
+        login = st.Page(LoginScreen(auth, manager).render, title="Log in",
+                        icon=":material/login:", url_path="login", default=True)
+        st.navigation([login], position="hidden").run()
     else:
-        BaseView.for_user(user, manager).render()
+        BaseView.for_user(user, manager, auth).render()
 
 
 try:

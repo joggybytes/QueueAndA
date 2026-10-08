@@ -1,10 +1,3 @@
-"""BookingManager: the business rules of Queue&A.
-
-The Streamlit screens call simple methods such as ``publish_slot()``,
-``request_booking()`` and ``accept_booking()``; all slot validation,
-double-booking prevention and locking happens here (abstraction).
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,6 +8,11 @@ from core import timeutil
 from core.datastore import DataStore
 from core.models import (Booking, BookingStatus, ConflictError, Course, PermissionDenied,
                          ScheduleSlot, SlotStatus, Student, Teacher, User, ValidationError)
+
+
+class EarlyCompletionWarning(ValidationError):
+    """Raised when a meeting is marked completed before its start time without
+    the teacher confirming it."""
 
 
 @dataclass(frozen=True)
@@ -55,6 +53,7 @@ class BookingManager:
     EXPIRED_NOTE = "Expired: the teacher did not respond before the schedule started."
     TAKEN_NOTE = "Another student was booked for this schedule."
     REMOVED_NOTE = "The teacher removed this schedule."
+    EARLY_NOTE = "Marked as completed before the scheduled time."
 
     def __init__(self, store: DataStore, clock: Callable[[], datetime] = timeutil.now):
         self._store = store
@@ -93,6 +92,71 @@ class BookingManager:
                     continue
             results.append(teacher)
         return results
+
+    # =================================================================
+    # Teacher's courses (Teacher end -> My Courses)
+    # =================================================================
+    def add_courses(self, teacher: User, course_ids: list[str]) -> Teacher:
+        """Add one or more existing courses to the courses a teacher handles."""
+        teacher = self._require_teacher(teacher)
+        if not course_ids:
+            raise ValidationError("Choose at least one course to add.")
+        known = self.courses_by_id()
+        unknown = [cid for cid in course_ids if cid not in known]
+        if unknown:
+            raise ValidationError("One of the selected courses no longer exists. Refresh and try again.")
+        return self._save_courses(teacher, list(teacher.course_ids) + list(course_ids))
+
+    def remove_course(self, teacher: User, course_id: str) -> Teacher:
+        """Stop handling a course. Bookings already made for it are not affected."""
+        teacher = self._require_teacher(teacher)
+        if not teacher.teaches(course_id):
+            return teacher
+        remaining = [cid for cid in teacher.course_ids if cid != course_id]
+        if not remaining:
+            raise ValidationError("You need at least one course so students can book with you.")
+        return self._save_courses(teacher, remaining)
+
+    def create_course_for(self, teacher: User, code: str, title: str) -> tuple[Course, bool]:
+        """Add a course that isn't in the list yet and attach it to the teacher.
+
+        If a course with the same code already exists, that course is used
+        instead of creating a duplicate. Returns ``(course, already_existed)``.
+        """
+        teacher = self._require_teacher(teacher)
+        course = Course(code, title)  # validates code and title
+        existing = self._store.get_course_by_code(course.code)
+        course = existing or self._store.add_course(course)
+        self._save_courses(teacher, list(teacher.course_ids) + [course.id])
+        return course, existing is not None
+
+    def update_course(self, teacher: User, course_id: str, code: str, title: str) -> Course:
+        """Rename a course (code and/or title). Only a teacher who handles it may do this."""
+        teacher = self._require_teacher(teacher)
+        if not teacher.teaches(course_id):
+            raise PermissionDenied("You can only edit courses you handle.")
+        course = Course(code, title, course_id=course_id)  # validates both fields
+        clash = self._store.get_course_by_code(course.code)
+        if clash is not None and clash.id != course_id:
+            raise ValidationError(f"Another course already uses the code {course.code}.")
+        return self._store.update_course(course)
+
+    def other_teachers_handling(self, teacher: User, course_id: str) -> int:
+        """How many other teachers would also see a change to this course."""
+        return sum(1 for t in self._store.list_teachers()
+                   if t.id != teacher.id and t.teaches(course_id))
+
+    def _require_teacher(self, user: User) -> Teacher:
+        if not isinstance(user, Teacher):
+            raise PermissionDenied("Only teachers can manage courses.")
+        fresh = self._store.get_user(user.id)  # use the latest saved course list
+        if not isinstance(fresh, Teacher):
+            raise PermissionDenied("Only teachers can manage courses.")
+        return fresh
+
+    def _save_courses(self, teacher: Teacher, course_ids: list[str]) -> Teacher:
+        self._store.set_teacher_courses(teacher.id, list(dict.fromkeys(course_ids)))
+        return self._store.get_user(teacher.id)
 
     # =================================================================
     # Schedule slots (Teacher end -> Publish Availability)
@@ -239,12 +303,59 @@ class BookingManager:
                 self._store.update_slot_status(slot, expected=SlotStatus.BOOKED)
         return booking
 
+    def is_early(self, slot: ScheduleSlot | None) -> bool:
+        """True when a meeting's scheduled start time hasn't arrived yet."""
+        return slot is not None and not slot.has_started(self.now())
+
+    def mark_completed(self, teacher: User, booking_id: str, confirm_early: bool = False) -> Booking:
+        """Teacher end: mark a confirmed consultation as done.
+
+        Completing a meeting before its scheduled start is allowed, but only
+        when the teacher has confirmed it (``confirm_early=True``) after
+        seeing a warning. The booking's note records that it ended early.
+        """
+        booking = self._owned_booking(teacher, booking_id, Teacher)
+        if booking.status != BookingStatus.CONFIRMED:
+            raise ConflictError("Only confirmed consultations can be marked as completed.")
+        slot = self._store.get_slot(booking.slot_id)
+        early = self.is_early(slot)
+        if early and not confirm_early:
+            raise EarlyCompletionWarning(
+                f"This meeting is scheduled for {slot.label} and hasn't started yet. "
+                "Confirm that you want to mark it as completed anyway."
+            )
+        booking.complete(self.EARLY_NOTE if early else None)
+        if not self._store.update_booking(booking, expected=BookingStatus.CONFIRMED):
+            raise ConflictError("This booking just changed. Refresh and try again.")
+        return booking
+
     def update_meeting_link(self, teacher: User, booking_id: str, meeting_link: str | None) -> Booking:
         booking = self._owned_booking(teacher, booking_id, Teacher)
         booking.update_meeting_link(meeting_link)
         if not self._store.update_booking(booking, expected=BookingStatus.CONFIRMED):
             raise ConflictError("This booking just changed. Refresh and try again.")
         return booking
+
+    def close_account(self, user: User) -> None:
+        """Clean up before an account is deleted: cancel the user's pending and
+        confirmed bookings, and take down a teacher's remaining schedules."""
+        note = f"Cancelled: the {user.role} deleted their account."
+        for booking in self._store.list_bookings(statuses=BookingStatus.active(),
+                                                 **user.booking_filter()):
+            previous = booking.status
+            booking.cancel(note)
+            saved = self._store.update_booking(booking, expected=previous)
+            if saved and previous == BookingStatus.CONFIRMED:
+                slot = self._store.get_slot(booking.slot_id)
+                if slot is not None and slot.is_booked:
+                    slot.release()
+                    self._store.update_slot_status(slot, expected=SlotStatus.BOOKED)
+        if isinstance(user, Teacher):
+            for slot in self._store.list_slots(user.id, [SlotStatus.OPEN, SlotStatus.BOOKED]):
+                previous = slot.status
+                slot.release()
+                slot.remove()
+                self._store.update_slot_status(slot, expected=previous)
 
     def refresh_statuses(self, user: User) -> None:
         """Move finished consultations to history and expire unanswered requests."""

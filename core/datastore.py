@@ -1,11 +1,3 @@
-"""Data storage for Queue&A.
-
-``DataStore`` is an abstract interface (abstraction). ``SupabaseDataStore``
-is the real implementation used by the app; the tests use an in-memory
-implementation of the same interface, so the business logic in
-``BookingManager`` never needs to know which one it is talking to.
-"""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -18,6 +10,16 @@ from core.models import (Booking, BookingStatus, ConflictError, Course, QueueAEr
 
 class DataStoreError(QueueAError):
     """The database could not complete a request."""
+
+
+def deleted_user_record(user_id: str) -> dict:
+    """Fields written over a deleted account (personal details removed)."""
+    return {
+        "name": User.DELETED_NAME,
+        "email": f"deleted-{user_id}@deleted.invalid",  # frees the real email for reuse
+        "password_hash": "!",                          # matches no password
+        "deleted_at": timeutil.to_iso(timeutil.now()),
+    }
 
 
 class DataStore(ABC):
@@ -37,6 +39,20 @@ class DataStore(ABC):
     @abstractmethod
     def list_teachers(self) -> list[Teacher]: ...
 
+    @abstractmethod
+    def set_teacher_courses(self, teacher_id: str, course_ids: list[str]) -> None:
+        """Replace the list of courses a teacher handles."""
+
+    @abstractmethod
+    def update_user(self, user: User) -> User:
+        """Save a user's name, email and password hash."""
+
+    @abstractmethod
+    def delete_user(self, user: User) -> None:
+        """Delete an account: wipe its name, email and password, remove its
+        course links, and mark it deleted. Booking records are kept so the
+        other person's history stays complete (shown as "Deleted user")."""
+
     # ---- courses -------------------------------------------------------
     @abstractmethod
     def list_courses(self) -> list[Course]: ...
@@ -46,6 +62,9 @@ class DataStore(ABC):
 
     @abstractmethod
     def add_course(self, course: Course) -> Course: ...
+
+    @abstractmethod
+    def update_course(self, course: Course) -> Course: ...
 
     # ---- schedule slots ------------------------------------------------
     @abstractmethod
@@ -117,6 +136,9 @@ class SupabaseDataStore(DataStore):
         if code == "42501" or "row-level security" in message:
             return DataStoreError("Supabase refused access. In .streamlit/secrets.toml, use the "
                                   "secret (service_role) key, not the anon/publishable key.")
+        if code in ("42703", "PGRST204") or "deleted_at" in message:
+            return DataStoreError("Your Supabase database needs an update for this version of "
+                                  "Queue&A. Run supabase/schema.sql again in the SQL Editor.")
         if code in ("42P01", "PGRST205") or "does not exist" in message or "Could not find the table" in message:
             return DataStoreError("The Queue&A tables were not found. Run supabase/schema.sql in "
                                   "the Supabase SQL Editor first.")
@@ -171,8 +193,35 @@ class SupabaseDataStore(DataStore):
         return User.from_record(record, course_ids)
 
     def list_teachers(self) -> list[Teacher]:
-        rows = self._run(self._table("users").select("*").eq("role", Teacher.ROLE).order("name"))
+        rows = self._run(self._table("users").select("*").eq("role", Teacher.ROLE)
+                         .is_("deleted_at", "null").order("name"))
         return [u for u in self._users_from_rows(rows) if isinstance(u, Teacher)]
+
+    def set_teacher_courses(self, teacher_id: str, course_ids: list[str]) -> None:
+        wanted = list(dict.fromkeys(course_ids))
+        current = set(self._course_ids_by_teacher([teacher_id]).get(teacher_id, []))
+        to_add = [cid for cid in wanted if cid not in current]
+        to_remove = [cid for cid in current if cid not in set(wanted)]
+        if to_add:
+            rows = [{"teacher_id": teacher_id, "course_id": cid} for cid in to_add]
+            self._run(self._table("teacher_courses")
+                      .upsert(rows, on_conflict="teacher_id,course_id", ignore_duplicates=True))
+        if to_remove:
+            self._run(self._table("teacher_courses").delete()
+                      .eq("teacher_id", teacher_id).in_("course_id", to_remove))
+
+    def update_user(self, user: User) -> User:
+        record = user.to_record()
+        fields = {k: record[k] for k in ("name", "email", "password_hash")}
+        rows = self._run(self._table("users").update(fields)
+                         .eq("id", user.id).is_("deleted_at", "null"))
+        if not rows:
+            raise ConflictError("This account no longer exists.")
+        return self.get_user(user.id)
+
+    def delete_user(self, user: User) -> None:
+        self._run(self._table("teacher_courses").delete().eq("teacher_id", user.id))
+        self._run(self._table("users").update(deleted_user_record(user.id)).eq("id", user.id))
 
     # ---- courses -------------------------------------------------------
     def list_courses(self) -> list[Course]:
@@ -186,6 +235,14 @@ class SupabaseDataStore(DataStore):
 
     def add_course(self, course: Course) -> Course:
         rows = self._run(self._table("courses").insert(course.to_record()))
+        return Course.from_record(rows[0])
+
+    def update_course(self, course: Course) -> Course:
+        rows = self._run(self._table("courses")
+                         .update({"code": course.code, "title": course.title})
+                         .eq("id", course.id))
+        if not rows:
+            raise ConflictError("That course no longer exists. Refresh and try again.")
         return Course.from_record(rows[0])
 
     # ---- schedule slots ------------------------------------------------

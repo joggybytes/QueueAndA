@@ -7,7 +7,7 @@ import streamlit as st
 from core.auth import AuthManager
 from core.manager import BookingManager
 from core.models import QueueAError, User
-from ui.common import flash, show_flash
+from ui.common import flash, hide_sidebar, show_flash
 
 
 class LoginScreen:
@@ -23,10 +23,11 @@ class LoginScreen:
         st.session_state["user_id"] = user.id
 
     def render(self) -> None:
+        hide_sidebar()  # no menu before login (also clears the leftover panel after logout)
         _, center, _ = st.columns([1, 1.4, 1])
         with center:
             st.title("Queue&A")
-            st.caption("Book consultations with your teachers, without the back-and-forth.")
+            st.caption("Book consultations with your teachers on one platform.")
             show_flash()
             login_tab, signup_tab = st.tabs(["Log in", "Sign up"])
             with login_tab:
@@ -47,7 +48,7 @@ class LoginScreen:
                 st.error(str(exc))
                 return
             self.start_session(user)
-            flash(f"Welcome back, {user.name}!")
+            flash("You're logged in.")
             st.rerun()
 
     def _render_signup(self) -> None:
@@ -58,8 +59,8 @@ class LoginScreen:
         course_labels = {c.id: c.label for c in courses}
 
         with st.form("signup_form"):
-            name = st.text_input("Full name", placeholder="e.g. Juan Dela Cruz")
-            email = st.text_input("Email", placeholder="you@school.edu", key="signup_email")
+            name = st.text_input("Full name", placeholder="e.g. Cesar Leonardo M. Europa")
+            email = st.text_input("Email", placeholder="email@mcm.edu.ph", key="signup_email")
             password = st.text_input("Password", type="password", help="At least 8 characters.",
                                      key="signup_password")
             confirm = st.text_input("Confirm password", type="password")
@@ -73,8 +74,8 @@ class LoginScreen:
                                             placeholder="Choose one or more courses")
                 st.caption("Not in the list? Add it here:")
                 col_code, col_title = st.columns([1, 2])
-                new_code = col_code.text_input("Course code", placeholder="IT305")
-                new_title = col_title.text_input("Course title", placeholder="Web Development")
+                new_code = col_code.text_input("Course code", placeholder="CS101")
+                new_title = col_title.text_input("Course title", placeholder="Introduction to Computer Systems")
 
             submitted = st.form_submit_button("Create account", type="primary")
 
@@ -89,5 +90,5 @@ class LoginScreen:
                 st.error(str(exc))
                 return
             self.start_session(user)
-            flash(f"Welcome to Queue&A, {user.name}! Your {user.role} account is ready.")
+            flash(f"Your {user.role} account is ready.")
             st.rerun()

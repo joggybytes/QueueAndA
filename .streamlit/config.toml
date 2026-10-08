@@ -1,0 +1,5 @@
+[theme.light]
+primaryColor = "#15803d"   # green-700, readable on white
+
+[theme.dark]
+primaryColor = "#16a34a"   # green-600, a little brighter on dark backgrounds

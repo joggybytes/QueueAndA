@@ -68,19 +68,40 @@ class User(ABC):
     _HASH_NAME = "sha256"
     _ITERATIONS = 200_000
 
+    DELETED_NAME = "Deleted user"
+
     def __init__(self, name: str, email: str, user_id: str | None = None,
-                 password_hash: str | None = None, created_at: datetime | None = None):
-        name = (name or "").strip()
-        email = (email or "").strip().lower()
-        if not name:
-            raise ValidationError("Name is required.")
-        if not email:
-            raise ValidationError("Email is required.")
+                 password_hash: str | None = None, created_at: datetime | None = None,
+                 deleted_at: datetime | None = None):
         self._id = user_id
-        self._name = name
-        self._email = email
+        self._name = self._clean_name(name)
+        self._email = self._clean_email(email)
         self._password_hash = password_hash  # encapsulated: never exposed
         self._created_at = created_at
+        self._deleted_at = deleted_at
+
+    NAME_MAX = 100
+
+    @classmethod
+    def _clean_name(cls, name: str) -> str:
+        name = " ".join((name or "").split())
+        if not name:
+            raise ValidationError("Name is required.")
+        if len(name) > cls.NAME_MAX:
+            raise ValidationError(f"Name must be {cls.NAME_MAX} characters or fewer.")
+        return name
+
+    @staticmethod
+    def _clean_email(email: str) -> str:
+        email = (email or "").strip().lower()
+        if not email:
+            raise ValidationError("Email is required.")
+        return email
+
+    def update_details(self, name: str, email: str) -> None:
+        """Change name and/or email (validated; saved by the data store)."""
+        new_name, new_email = self._clean_name(name), self._clean_email(email)
+        self._name, self._email = new_name, new_email
 
     # Subclasses register themselves so records can be turned back into the
     # right class (Teacher or Student) without if/else chains.
@@ -105,6 +126,14 @@ class User(ABC):
     @property
     def role(self) -> str:
         return self.ROLE
+
+    @property
+    def created_at(self) -> datetime | None:
+        return self._created_at
+
+    @property
+    def is_deleted(self) -> bool:
+        return self._deleted_at is not None
 
     @property
     def role_label(self) -> str:
@@ -181,7 +210,8 @@ class User(ABC):
     def _build(cls, record: dict, course_ids: list[str]) -> User:
         return cls(name=record["name"], email=record["email"], user_id=record.get("id"),
                    password_hash=record.get("password_hash"),
-                   created_at=timeutil.parse(record.get("created_at")))
+                   created_at=timeutil.parse(record.get("created_at")),
+                   deleted_at=timeutil.parse(record.get("deleted_at")))
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(id={self._id!r}, email={self._email!r})"
@@ -222,7 +252,8 @@ class Teacher(User):
     def _build(cls, record: dict, course_ids: list[str]) -> Teacher:
         return cls(name=record["name"], email=record["email"], course_ids=course_ids,
                    user_id=record.get("id"), password_hash=record.get("password_hash"),
-                   created_at=timeutil.parse(record.get("created_at")))
+                   created_at=timeutil.parse(record.get("created_at")),
+                   deleted_at=timeutil.parse(record.get("deleted_at")))
 
 
 class Student(User):
@@ -509,8 +540,10 @@ class Booking:
         self._transition(BookingStatus.active(), BookingStatus.CANCELLED)
         self._note = (reason or "").strip() or None
 
-    def complete(self) -> None:
+    def complete(self, note: str | None = None) -> None:
         self._transition([BookingStatus.CONFIRMED], BookingStatus.COMPLETED)
+        if note:
+            self._note = note
 
     def update_meeting_link(self, meeting_link: str | None) -> None:
         if self._status != BookingStatus.CONFIRMED:
