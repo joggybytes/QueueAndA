@@ -1,0 +1,20 @@
+# light theme only, the rest of the styling is in views/common.py
+[theme]
+base = "light"
+primaryColor = "#262626"             # dark grey buttons
+backgroundColor = "#f8f8f8"          # light grey backround
+secondaryBackgroundColor = "#ffffff" # white boxes
+textColor = "#262626"
+linkColor = "#2073a1"
+borderColor = "#cdcdcd"
+showWidgetBorder = true
+baseRadius = "small"
+buttonRadius = "small"
+font = "'Open Sans':https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap, sans-serif"
+
+[theme.sidebar]
+backgroundColor = "#262626"          # dark sidebar
+secondaryBackgroundColor = "#333333"
+textColor = "#ffffff"
+borderColor = "#3d3d3d"
+primaryColor = "#a00000"
