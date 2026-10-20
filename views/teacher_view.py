@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import time, timedelta
 
 import streamlit as st  # pyright: ignore[reportMissingImports]
@@ -144,9 +145,7 @@ class TeacherView(BaseView):
     # publish availability
     def render_publish(self) -> None:
         slots = self.manager.teacher_slots(self.user)
-        pending_by_slot: dict[str, int] = {}
-        for b in self.user.pending_requests(self.manager):
-            pending_by_slot[b.slot_id] = pending_by_slot.get(b.slot_id, 0) + 1
+        pending_by_slot = Counter(b.slot_id for b in self.user.pending_requests(self.manager))
         self.page_header()
 
         st.caption("Publish the times when students can book a consultation with you.")
@@ -277,9 +276,7 @@ class TeacherView(BaseView):
         if not requests:
             st.info("No pending requests. New booking requests from students will appear here.")
             return
-        per_slot: dict[str, int] = {}
-        for d in requests:
-            per_slot[d.booking.slot_id] = per_slot.get(d.booking.slot_id, 0) + 1
+        per_slot = Counter(d.booking.slot_id for d in requests)
 
         st.caption("Accepting a request confirms it and locks the schedule. Other requests for "
                    "the same schedule are declined automatically.")

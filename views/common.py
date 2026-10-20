@@ -210,7 +210,6 @@ def apply_theme() -> None:
 HIDE_SIDEBAR_CSS = """
 <style>
 section[data-testid="stSidebar"],
-[data-testid="stSidebarCollapsedControl"],
 [data-testid="stExpandSidebarButton"],
 [data-testid="stSidebarCollapseButton"] {
     display: none !important;

@@ -125,9 +125,6 @@ class StudentView(BaseView):
             if not slots:
                 st.caption("No open schedules right now. Check back later.")
                 return
-            if not teacher_courses:
-                st.caption("This teacher hasn't listed any courses yet.")
-                return
 
             with st.expander(f"Book a consultation · {len(slots)} open schedule(s)"):
                 slot_labels = {s.id: s.label for s in slots}

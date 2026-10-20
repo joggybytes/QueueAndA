@@ -67,11 +67,6 @@ class BookingManager:
     def courses_by_id(self) -> dict[str, Course]:
         return {c.id: c for c in self._store.list_courses()}
 
-    def courses_for(self, teacher: Teacher) -> list[Course]:
-        courses = self.courses_by_id()
-        found = [courses[cid] for cid in teacher.course_ids if cid in courses]
-        return sorted(found, key=lambda c: c.code)
-
     def search_teachers(self, query: str = "", course_id: str | None = None) -> list[Teacher]:
         courses = self.courses_by_id()
         needle = (query or "").strip().lower()
@@ -166,21 +161,14 @@ class BookingManager:
                 raise ValidationError(f"This overlaps with your schedule on {existing.label}.")
         return self._store.add_slot(ScheduleSlot(teacher.id, start, end))
 
-    def teacher_slots(self, teacher: Teacher, upcoming_only: bool = True) -> list[ScheduleSlot]:
-        slots = self._store.list_slots(teacher.id, [SlotStatus.OPEN, SlotStatus.BOOKED])
-        if upcoming_only:
-            now = self.now()
-            slots = [s for s in slots if not s.has_ended(now)]
-        return slots
-
-    def open_slots(self, teacher_id: str) -> list[ScheduleSlot]:
-        """slots students can still book"""
+    def teacher_slots(self, teacher: Teacher) -> list[ScheduleSlot]:
+        """slots that havent ended yet"""
         now = self.now()
-        return [s for s in self._store.list_slots(teacher_id, [SlotStatus.OPEN])
-                if not s.has_started(now)]
+        return [s for s in self._store.list_slots(teacher.id, [SlotStatus.OPEN, SlotStatus.BOOKED])
+                if not s.has_ended(now)]
 
     def open_slots_by_teacher(self, teacher_ids: list[str]) -> dict[str, list[ScheduleSlot]]:
-        """open slots for alot of teachers at once"""
+        """slots students can still book, for alot of teachers at once"""
         now = self.now()
         result: dict[str, list[ScheduleSlot]] = {tid: [] for tid in teacher_ids}
         for slot in self._store.list_slots_for_teachers(teacher_ids, [SlotStatus.OPEN]):
@@ -204,11 +192,9 @@ class BookingManager:
 
     # bookings
     def bookings_for(self, *, student_id: str | None = None, teacher_id: str | None = None,
-                     statuses: list[BookingStatus] | None = None,
-                     newest_first: bool = False) -> list[Booking]:
-        bookings = self._store.list_bookings(student_id=student_id, teacher_id=teacher_id,
-                                             statuses=statuses)
-        return list(reversed(bookings)) if newest_first else bookings
+                     statuses: list[BookingStatus] | None = None) -> list[Booking]:
+        return self._store.list_bookings(student_id=student_id, teacher_id=teacher_id,
+                                         statuses=statuses)
 
     def request_booking(self, student: User, slot_id: str, course_id: str,
                         purpose: str) -> Booking:
@@ -292,10 +278,7 @@ class BookingManager:
         if not self._store.update_booking(booking, expected=previous):
             raise ConflictError("This booking just changed. Refresh and try again.")
         if previous == BookingStatus.CONFIRMED:
-            slot = self._store.get_slot(booking.slot_id)
-            if slot is not None and slot.is_booked:
-                slot.release()
-                self._store.update_slot_status(slot, expected=SlotStatus.BOOKED)
+            self._reopen_slot(booking)
         return booking
 
     def is_early(self, slot: ScheduleSlot | None) -> bool:
@@ -335,10 +318,7 @@ class BookingManager:
             booking.cancel(note)
             saved = self._store.update_booking(booking, expected=previous)
             if saved and previous == BookingStatus.CONFIRMED:
-                slot = self._store.get_slot(booking.slot_id)
-                if slot is not None and slot.is_booked:
-                    slot.release()
-                    self._store.update_slot_status(slot, expected=SlotStatus.BOOKED)
+                self._reopen_slot(booking)
         if isinstance(user, Teacher):
             for slot in self._store.list_slots(user.id, [SlotStatus.OPEN, SlotStatus.BOOKED]):
                 previous = slot.status
@@ -378,6 +358,13 @@ class BookingManager:
         return rows
 
     # internal
+    def _reopen_slot(self, booking: Booking) -> None:
+        """opens the slot again after a confirmed booking is cancelled"""
+        slot = self._store.get_slot(booking.slot_id)
+        if slot is not None and slot.is_booked:
+            slot.release()
+            self._store.update_slot_status(slot, expected=SlotStatus.BOOKED)
+
     def _owned_booking(self, user: User, booking_id: str,
                        required_role: type[User] | None = None) -> Booking:
         if required_role is not None and not isinstance(user, required_role):

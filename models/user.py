@@ -165,10 +165,15 @@ class User(ABC):
 
     @classmethod
     def _build(cls, record: dict, course_ids: list[str]) -> User:
-        return cls(name=record["name"], email=record["email"], user_id=record.get("id"),
-                   password_hash=record.get("password_hash"),
-                   created_at=timeutil.parse(record.get("created_at")),
-                   deleted_at=timeutil.parse(record.get("deleted_at")))
+        return cls(**cls._record_fields(record))
+
+    @staticmethod
+    def _record_fields(record: dict) -> dict:
+        """database row into the arguments every user needs"""
+        return dict(name=record["name"], email=record["email"], user_id=record.get("id"),
+                    password_hash=record.get("password_hash"),
+                    created_at=timeutil.parse(record.get("created_at")),
+                    deleted_at=timeutil.parse(record.get("deleted_at")))
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(id={self._id!r}, email={self._email!r})"
@@ -196,8 +201,7 @@ class Teacher(User):
         return manager.bookings_for(teacher_id=self.id, statuses=[BookingStatus.PENDING])
 
     def view_history(self, manager: BookingManager) -> list[Booking]:
-        return manager.bookings_for(teacher_id=self.id, statuses=BookingStatus.closed(),
-                                    newest_first=True)
+        return manager.bookings_for(teacher_id=self.id, statuses=BookingStatus.closed())
 
     def owns_booking(self, booking: Booking) -> bool:
         return booking.teacher_id == self.id
@@ -207,10 +211,7 @@ class Teacher(User):
 
     @classmethod
     def _build(cls, record: dict, course_ids: list[str]) -> Teacher:
-        return cls(name=record["name"], email=record["email"], course_ids=course_ids,
-                   user_id=record.get("id"), password_hash=record.get("password_hash"),
-                   created_at=timeutil.parse(record.get("created_at")),
-                   deleted_at=timeutil.parse(record.get("deleted_at")))
+        return cls(course_ids=course_ids, **cls._record_fields(record))
 
 
 class Student(User):
@@ -221,8 +222,7 @@ class Student(User):
         return manager.bookings_for(student_id=self.id, statuses=BookingStatus.active())
 
     def view_history(self, manager: BookingManager) -> list[Booking]:
-        return manager.bookings_for(student_id=self.id, statuses=BookingStatus.closed(),
-                                    newest_first=True)
+        return manager.bookings_for(student_id=self.id, statuses=BookingStatus.closed())
 
     def owns_booking(self, booking: Booking) -> bool:
         return booking.student_id == self.id

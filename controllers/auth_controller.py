@@ -64,8 +64,7 @@ class AuthManager:
             if not course_ids and not to_add:
                 raise ValidationError("Select at least one course that you handle.")
             for course in to_add:
-                existing = self._store.get_course_by_code(course.code)
-                course_id = (existing or self._store.add_course(course)).id
+                course_id = self._get_or_create_course(course).id
                 if course_id not in course_ids:
                     course_ids.append(course_id)
         else:
@@ -148,9 +147,7 @@ class AuthManager:
     def delete_account(self, user: User, password: str, confirmed: bool,
                        manager: BookingManager) -> None:
         """deletes the account"""
-        fresh = self.get_user(user.id)
-        if fresh is None:
-            raise AuthError("This account no longer exists.")
+        fresh = self._require_active(user)
         if not confirmed:
             raise ValidationError("Tick the box to confirm that you want to delete your account.")
         if not fresh.verify_password(password or ""):
@@ -158,7 +155,6 @@ class AuthManager:
         manager.close_account(fresh)
         self._store.delete_user(fresh)
 
-    def _get_or_create_course(self, code: str, title: str) -> Course:
-        course = Course(code, title)  # checks both
-        existing = self._store.get_course_by_code(course.code)
-        return existing or self._store.add_course(course)
+    def _get_or_create_course(self, course: Course) -> Course:
+        """uses the saved course if the code exists, otherwise saves this one"""
+        return self._store.get_course_by_code(course.code) or self._store.add_course(course)

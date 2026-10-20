@@ -92,10 +92,6 @@ class Booking:
     def created_at(self) -> datetime | None:
         return self._created_at
 
-    @property
-    def is_active(self) -> bool:
-        return self._status in BookingStatus.active()
-
     # status changes
     def _transition(self, allowed_from: list[BookingStatus], to: BookingStatus) -> None:
         if self._status not in allowed_from:
