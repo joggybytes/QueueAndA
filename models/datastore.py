@@ -5,7 +5,7 @@ from typing import Iterable
 
 from models.booking import Booking, BookingStatus
 from models.course import Course
-from models.errors import ConflictError, DataStoreError, QueueAError
+from models.errors import ConflictError
 from models.schedule_slot import ScheduleSlot, SlotStatus
 from models.user import Teacher, User
 from utils import timeutil
@@ -119,11 +119,7 @@ class SupabaseDataStore(DataStore):
         return self._db.table(name)
 
     def _run(self, query) -> list[dict]:
-        try:
-            response = query.execute()
-        except Exception as exc:  # database errors
-            raise self._translate(exc) from exc
-        return response.data or []
+        return query.execute().data or []
 
     # users and courses in one request, falls back to two if it dosent work
     _USER_COLUMNS = "*, teacher_courses(course_id)"
@@ -135,30 +131,13 @@ class SupabaseDataStore(DataStore):
             try:
                 response = add_filters(self._table("users").select(self._USER_COLUMNS)).execute()
             except Exception as exc:
-                if str(getattr(exc, "code", "") or "") != "PGRST200":
-                    raise self._translate(exc) from exc
+                if str(getattr(exc, "code", "") or "") != "PGRST200":  # pgrst200 = cant join the tables
+                    raise
                 SupabaseDataStore._embed_courses = False
             else:
                 return [User.from_record(r, [link["course_id"] for link in (r.get("teacher_courses") or [])])
                         for r in (response.data or [])]
         return self._users_from_rows(self._run(add_filters(self._table("users").select("*"))))
-
-    @staticmethod
-    def _translate(exc: Exception) -> QueueAError:
-        code = str(getattr(exc, "code", "") or "")
-        message = str(getattr(exc, "message", "") or exc)
-        if code == "23505":
-            return ConflictError("That was just taken or already exists. Please refresh and try again.")
-        if code == "42501" or "row-level security" in message:
-            return DataStoreError("Supabase refused access. In .streamlit/secrets.toml, use the "
-                                  "secret (service_role) key, not the anon/publishable key.")
-        if code in ("42703", "PGRST204") or "deleted_at" in message:
-            return DataStoreError("Your Supabase database needs an update for this version of "
-                                  "Queue&A. Run supabase/schema.sql again in the SQL Editor.")
-        if code in ("42P01", "PGRST205") or "does not exist" in message or "Could not find the table" in message:
-            return DataStoreError("The Queue&A tables were not found. Run supabase/schema.sql in "
-                                  "the Supabase SQL Editor first.")
-        return DataStoreError(f"Database error: {message}")
 
     def _course_ids_by_teacher(self, teacher_ids: list[str]) -> dict[str, list[str]]:
         if not teacher_ids:
@@ -198,7 +177,7 @@ class SupabaseDataStore(DataStore):
             links = [{"teacher_id": record["id"], "course_id": cid} for cid in course_ids]
             try:
                 self._run(self._table("teacher_courses").insert(links))
-            except QueueAError:
+            except Exception:
                 # undo it so the email can be used again
                 self._run(self._table("users").delete().eq("id", record["id"]))
                 raise

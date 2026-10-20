@@ -23,9 +23,5 @@ class ConflictError(QueueAError):
     """something changed (like the slot got taken)"""
 
 
-class DataStoreError(QueueAError):
-    """database problem"""
-
-
 class EarlyCompletionWarning(ValidationError):
     """completing before the meeting starts"""
