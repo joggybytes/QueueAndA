@@ -1,5 +1,16 @@
-.streamlit/secrets.toml
+# Python cache
 __pycache__/
 *.pyc
+ 
+# Virtual environments
 .venv/
 venv/
+ 
+# Private configuration
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+ 
+# Editor files
+.vscode/
