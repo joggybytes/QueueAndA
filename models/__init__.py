@@ -1,5 +1,3 @@
-"""classes, errors and the database"""
-
 from models.booking import Booking, BookingStatus
 from models.course import Course
 from models.datastore import DataStore, SupabaseDataStore, deleted_user_record

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import streamlit as st  # pyright: ignore[reportMissingImports]
 
-# tab icon, its the symbol from the logo
+# logo
 _TAB_ICON = Path(__file__).resolve().parent / "assets" / "queue_a_icon.png"
 
 st.set_page_config(page_title="Queue&A", page_icon=str(_TAB_ICON), layout="wide")
@@ -42,7 +42,7 @@ def _connect(url: str, key: str) -> SupabaseDataStore:
 
 @st.cache_resource(show_spinner=False)
 def _shared_cache() -> SharedCache:
-    # courses and teachers are shared for 30 secs so we dont fetch them all the time
+    # 30s cooldown
     return SharedCache(ttl=30.0)
 
 
